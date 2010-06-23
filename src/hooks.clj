@@ -12,8 +12,9 @@
 (defn- join-hooks [original hooks]
   (reduce compose-hooks original hooks))
 
-(defn- hooks [target]
-  (::hooks (meta target)))
+(defn- hooks
+  ([target] (-> target meta ::hooks))
+  ([target qualifier] (-> target meta ::hooks deref qualifier)))
 
 (defn- hooked? [target]
   (instance? clojure.lang.Ref (hooks target)))
@@ -22,12 +23,11 @@
   (if-not (hooked? target) target
           (do (dosync (alter (hooks target) assoc qualifier
                              (remove #(= key (:key %))
-                                     (qualifier @(hooks target)))))
-              (cond (let [hooks @(hooks target)]
-                      (every? empty? [(:around hooks)
-                                      (:before hooks)
-                                      (:after  hooks)]))
-                    (:original @(hooks target))
+                                     (hooks target qualifier))))
+              (cond (every? empty? [(hooks target :around)
+                                    (hooks target :before)
+                                    (hooks target :after)])
+                    (hooks target :original)
 
                     :has-hooks target))))
 
@@ -55,7 +55,7 @@
      (let [target (if-not (hooked? target) (add-hook-to-fn target) target)]
        (with-return target
          (dosync (alter (hooks target) assoc qualifier
-                        (conj (qualifier @(hooks target))
+                        (conj (hooks target qualifier)
                               {:key key :fn hook})))))))
 
 (defn- remove-hook-from-var [qualifier target key]
