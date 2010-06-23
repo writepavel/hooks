@@ -5,9 +5,6 @@
      (do ~@body)
      return#))
 
-(defn- multifn? [x]
-  (instance? clojure.lang.MultiFn x))
-
 (defn- compose-hooks [f1 f2]
   (fn [& args]
     (apply f2 f1 args)))
@@ -15,79 +12,62 @@
 (defn- join-hooks [original hooks]
   (reduce compose-hooks original hooks))
 
-(defn- run-hooks [hooked original args]
-  (apply (join-hooks original @(::hooks (meta hooked))) args))
+(defn- hooks [target]
+  (::hooks (meta target)))
 
-(defn- make-hook [key function]
-  {:key key :fn function})
+(defn- hooked? [target]
+  (instance? clojure.lang.Ref (hooks target)))
 
-(defn- get-hooks [target qualifier]
-  ((::hooks (meta target)) qualifier))
+(defn- remove-hook-from-fn [qualifier target key]
+  (if-not (hooked? target) target
+          (do (dosync (alter (hooks target) assoc qualifier
+                             (remove #(= key (:key %))
+                                     (qualifier @(hooks target)))))
+              (cond (let [hooks @(hooks target)]
+                      (every? empty? [(:around hooks)
+                                      (:before hooks)
+                                      (:after  hooks)]))
+                    (:original @(hooks target))
 
-(defn- get-hook [target qualifier key]
-  (when-let [hooks (get-hooks target qualifier)]
-    (some #(when (= key (:key %)) %) hooks)))
+                    :has-hooks target))))
 
-(defn- prepared-for-hooks? [target]
-  (instance? clojure.lang.Ref (::hooks (meta target))))
+(defn- add-hook-to-fn
+  ([original]
+     (let [hooks (ref {:original original
+                       :before   ()
+                       :after    ()
+                       :around   ()})]
+       (with-meta
+         (fn [& args]
+           (apply (join-hooks (fn [& args]
+                                (doseq [hook (reverse (:before @hooks))]
+                                  (apply (:fn hook) args))
+                                (with-return (apply original args)
+                                  (doseq [hook (:after @hooks)]
+                                    (apply (:fn hook) args))))
 
-(defn- prepare-for-hooks [original]
-  (let [hooks (ref {:original original
-                    :before   ()
-                    :after    ()
-                    :around   ()})
-        main-block (fn [& args]
-                     (doseq [hook (reverse (:before @hooks))]
-                       (apply (:fn hook) args))
-                     (with-return (apply original args)
-                       (doseq [hook (:after @hooks)]
-                         (apply (:fn hook) args))))
-        around-block (join-hooks main-block
-                                 (reverse (map :fn (:around @hooks))))]
-    (with-meta (fn [& args] (apply around-block args))
-      (assoc (meta original) ::hooks hooks))))
+                              (reverse (map :fn (:around @hooks))))
+                  args))
+         (assoc (meta original) ::hooks hooks))))
 
-(defmulti remove-hook
-  (fn ([qualifier target key]
-        (cond (fn? target) ::fn
-              (var? target) ::var))))
+  ([qualifier target key hook]
+     (remove-hook-from-fn qualifier target key)
+     (let [target (if-not (hooked? target) (add-hook-to-fn target) target)]
+       (with-return target
+         (dosync (alter (hooks target) assoc qualifier
+                        (conj (qualifier @(hooks target))
+                              {:key key :fn hook})))))))
 
-(defmulti add-hook
-  (fn ([qualifier target key hook]
-        (cond (fn? target) ::fn
-              (var? target) ::var))))
+(defn- remove-hook-from-var [qualifier target key]
+  (alter-var-root target #(remove-hook-from-fn qualifier % key)))
 
-(defmethod remove-hook ::fn
-  [qualifier target key]
-  (when (prepared-for-hooks? target)
-    (let [hooks-ref (::hooks (meta target))
-          hooks (qualifier @hooks-ref)]
-      (with-return target
-        (dosync (alter hooks-ref assoc qualifier
-                       (remove #(= key (:key %)) hooks)))))))
+(defn- add-hook-to-var [qualifier target key hook]
+  (alter-var-root target #(add-hook-to-fn qualifier % key hook)))
 
-(defmethod add-hook ::fn
-  [qualifier target key hook]
-  (let [target (if (prepared-for-hooks? target) target
-                   (prepare-for-hooks target))]
-    (remove-hook qualifier target key)
-    (let [hooks-ref (::hooks (meta target))
-          hooks (qualifier @hooks-ref)]
-      (with-return target
-        (dosync (alter hooks-ref assoc qualifier
-                       (conj hooks (make-hook key hook))))))))
+(defn remove-hook [qualifier target key]
+  (cond (fn? target)   (remove-hook-from-fn qualifier target key)
+        (var? target) (remove-hook-from-var qualifier target key)))
 
-(defmethod remove-hook ::var
-  [qualifier target key]
-  (when (prepared-for-hooks? @target)
-    (remove-hook qualifier @target key)
-    ;; (when (empty? @(::hooks (meta @target-var)))
-    ;;   (alter-var-root target-var
-    ;;                   (constantly (::original (meta @target-var)))))
-    ))
-
-(defmethod add-hook ::var
-  [qualifier target key hook]
-  (when-not (prepared-for-hooks? @target)
-    (alter-var-root target prepare-for-hooks))
-  (add-hook qualifier @target key hook))
+(defn add-hook [qualifier target key hook]
+  (cond (fn? target)   (add-hook-to-fn qualifier target key hook)
+        (var? target) (add-hook-to-var qualifier target key hook)))
