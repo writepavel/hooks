@@ -56,3 +56,23 @@
     (remove-hook :around #'examine :into-str)
     (is (= unhooked-examine examine))
     ))
+
+(deftest simple-add-and-remove-test
+  (let [unhooked-examine examine]
+    (add-hook #'examine microscope)
+    (add-hook #'examine doubler)
+    (add-hook #'examine telescope)
+    (add-hook #'examine into-string)
+    (is (= (examine "Lithp")
+           "L I T H PL I T H P"))
+
+    (remove-hook #'examine doubler)
+    (is (= (examine "Lithp")
+           "L I T H P"))
+  
+    (remove-hook #'examine microscope)
+    (remove-hook #'examine telescope)
+    (is (not= unhooked-examine examine))
+    (remove-hook #'examine into-string)
+    (is (= unhooked-examine examine))
+    ))

@@ -64,10 +64,14 @@
 (defn- add-hook-to-var [qualifier target key hook]
   (alter-var-root target #(add-hook-to-fn qualifier % key hook)))
 
-(defn remove-hook [qualifier target key]
-  (cond (fn? target)   (remove-hook-from-fn qualifier target key)
-        (var? target) (remove-hook-from-var qualifier target key)))
+(defn remove-hook
+  ([target hook] (remove-hook :around target hook))
+  ([qualifier target key]
+     (cond (fn? target)   (remove-hook-from-fn qualifier target key)
+           (var? target) (remove-hook-from-var qualifier target key))))
 
-(defn add-hook [qualifier target key hook]
-  (cond (fn? target)   (add-hook-to-fn qualifier target key hook)
-        (var? target) (add-hook-to-var qualifier target key hook)))
+(defn add-hook
+  ([target hook] (add-hook :around target hook hook))
+  ([qualifier target key hook]
+     (cond (fn? target)   (add-hook-to-fn qualifier target key hook)
+           (var? target) (add-hook-to-var qualifier target key hook))))
