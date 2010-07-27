@@ -1,6 +1,7 @@
-(ns hooks)
+(ns hooks
+  (:use clojure.contrib.def))
 
-(defmacro with-return [val & body]
+(defmacro- with-return [val & body]
   `(let [return# (do ~val)]
      (do ~@body)
      return#))
